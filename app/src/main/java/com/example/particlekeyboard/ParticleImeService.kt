@@ -2,12 +2,12 @@ package com.example.particlekeyboard
 
 import android.inputmethodservice.InputMethodService
 import android.view.View
+import android.view.inputmethod.EditorInfo
 
 class ParticleImeService : InputMethodService() {
 
-    // Make sure the keyboard never expands to fullscreen mode on any device
-    // (some phones do this automatically in landscape) — we want the app's
-    // own screen to always stay visible above the keyboard.
+    // Keyboard must never take over the whole screen — the app's own
+    // screen (the text field you're typing into) has to stay visible.
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onCreateInputView(): View {
@@ -23,7 +23,21 @@ class ParticleImeService : InputMethodService() {
                 currentInputConnection?.commitText(" ", 1)
             }
             override fun onEnter() {
-                currentInputConnection?.commitText("\n", 1)
+                // Real fix for "press Enter and it just adds a line instead
+                // of sending": ask the app what it actually wants Enter to
+                // do. Chat apps (WhatsApp, Telegram...) register a specific
+                // action like "Send" on their input field — we now trigger
+                // THAT action directly, exactly like the app's own send
+                // button would. Only plain multi-line fields (that don't
+                // request a specific action) get a literal newline.
+                val info = currentInputEditorInfo
+                val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
+                val noEnterFlag = (info?.imeOptions ?: 0) and EditorInfo.IME_FLAG_NO_ENTER_ACTION
+                if (info != null && action != null && action != EditorInfo.IME_ACTION_NONE && noEnterFlag == 0) {
+                    currentInputConnection?.performEditorAction(action)
+                } else {
+                    currentInputConnection?.commitText("\n", 1)
+                }
             }
         }
         return view
