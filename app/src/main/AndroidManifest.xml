@@ -1,23 +1,38 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<?xml version="1.0" encoding="UTF-8"?>
 
-    <application
-        android:allowBackup="true"
-        android:label="@string/app_name"
-        android:theme="@android:style/Theme.DeviceDefault">
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-        <service
-            android:name=".ParticleImeService"
-            android:label="Particle Keyboard"
-            android:permission="android.permission.BIND_INPUT_METHOD"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-            <meta-data
-                android:name="android.view.im"
-                android:resource="@xml/method" />
-        </service>
 
-    </application>
+-<application android:theme="@android:style/Theme.DeviceDefault" android:label="@string/app_name" android:allowBackup="true">
+
+
+-<activity android:exported="true" android:name=".MainActivity">
+
+
+-<intent-filter>
+
+<action android:name="android.intent.action.MAIN"/>
+
+<category android:name="android.intent.category.LAUNCHER"/>
+
+</intent-filter>
+
+</activity>
+
+
+-<service android:label="Tiger Keyboard" android:exported="true" android:name=".ParticleImeService" android:permission="android.permission.BIND_INPUT_METHOD">
+
+
+-<intent-filter>
+
+<action android:name="android.view.InputMethod"/>
+
+</intent-filter>
+
+<meta-data android:name="android.view.im" android:resource="@xml/method"/>
+
+</service>
+
+</application>
+
 </manifest>
