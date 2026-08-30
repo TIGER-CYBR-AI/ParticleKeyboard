@@ -1,0 +1,10 @@
+{
+  "name": "Particle Keyboard Android",
+  "build": { "dockerfile": "Dockerfile" },
+  "postCreateCommand": "echo 'البيئة جاهزة! اكتب: gradle assembleDebug'",
+  "customizations": {
+    "vscode": {
+      "extensions": ["redhat.java", "vscjava.vscode-gradle"]
+    }
+  }
+}

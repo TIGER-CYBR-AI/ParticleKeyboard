@@ -213,8 +213,15 @@ class ParticleField(
     /** sharedHue must be the SAME value passed to every field you draw this frame,
      *  so the whole keyboard pulses as one color, not a rainbow of separate ones. */
     fun draw(canvas: Canvas, sharedHue: Float) {
-        dotPaint.color = Color.HSVToColor(220, floatArrayOf(sharedHue, 0.75f, 0.85f))
         for (p in particles) {
+            // two-pass glow: a soft wide halo + a bright tight core.
+            // This is what actually makes particles look like they're
+            // GLOWING against the black background instead of just floating
+            // flat dots.
+            dotPaint.color = Color.HSVToColor(70, floatArrayOf(sharedHue, 0.65f, 0.95f))
+            canvas.drawCircle(p.x, p.y, p.size * 3.2f, dotPaint)
+
+            dotPaint.color = Color.HSVToColor(255, floatArrayOf(sharedHue, 0.55f, 1f))
             canvas.drawCircle(p.x, p.y, p.size, dotPaint)
         }
     }
