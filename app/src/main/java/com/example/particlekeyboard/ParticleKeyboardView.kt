@@ -33,6 +33,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     private var startTime = System.nanoTime()
     private lateinit var stripField: ParticleField
     private lateinit var bgField: ParticleField
+    private lateinit var textSystem: TextParticleSystem
     private var initialized = false
     private var lastBgBounds = RectF()
     private var charAreaRect = RectF()
@@ -49,6 +50,17 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     private var currentPage = Page.AR
     private var lastLetterPage = Page.AR
     private var shiftOn = false
+    // shows what Enter will actually do in the current app field — lets you
+    // SEE whether it's about to Send, Search, Go, Done, or just a plain
+    // newline, instead of guessing.
+    private var enterLabel = "⏎"
+
+    fun setEnterLabel(label: String) {
+        if (enterLabel == label) return
+        enterLabel = label
+        layoutKeys(lastBgBounds)
+        invalidate()
+    }
 
     // ---------- scrolling (emoji page only) ----------
     private var emojiScrollPx = 0f
@@ -80,7 +92,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     // punctuation — reached automatically when coming from the Arabic page.
     private val arSymbolRows: List<List<KeyDef>> = listOf(
         listOf("َ", "ً", "ُ", "ٌ", "ِ", "ٍ", "ّ", "ْ", "ـ").map { KeyDef(it, "char") },
-        listOf("،", "؛", "؟", "«", "»", "٪", "(", ")", "-").map { KeyDef(it, "char") },
+        listOf("أ", "إ", "آ", "،", "؛", "؟", "«", "»", "٪", "(", ")").map { KeyDef(it, "char") },
         listOf("\"", "“", "”", "…", "–", "@", "#", "/").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
     )
     // English-specific symbols page: general programming/punctuation set.
@@ -164,12 +176,17 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         lastBgBounds = bgBounds
 
         if (!initialized) {
-            stripField = ParticleField(stripBounds, particleCount = 220, textPoolSize = 260, hasGap = true)
-            bgField = ParticleField(bgBounds, particleCount = 150, textPoolSize = 0, hasGap = false)
+            // background is now just a soft glow with a handful of ambient
+            // particles — the heavy lifting all happens in TextParticleSystem,
+            // which only creates particles when actually needed.
+            stripField = ParticleField(stripBounds, particleCount = 70, textPoolSize = 0, hasGap = true)
+            bgField = ParticleField(bgBounds, particleCount = 45, textPoolSize = 0, hasGap = false)
+            textSystem = TextParticleSystem(stripBounds)
             initialized = true
         } else {
             stripField.setBounds(stripBounds)
             bgField.setBounds(bgBounds)
+            textSystem.setBounds(stripBounds)
         }
         layoutKeys(bgBounds)
     }
@@ -249,7 +266,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
 
         addKey(RectF(x + keyGapPx, y + keyGapPx, x + spaceWidth - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef("مسافة", "space"))
         x += spaceWidth
-        addKey(RectF(x + keyGapPx, y + keyGapPx, area.right - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef("⏎", "enter"))
+        addKey(RectF(x + keyGapPx, y + keyGapPx, area.right - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef(enterLabel, "enter"))
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -300,7 +317,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
                 val out = if (currentPage == Page.EN && shiftOn) def.label.uppercase() else def.label
                 currentWord.append(out)
                 keyListener?.onChar(out)
-                stripField.applyText(currentWord.toString())
+                textSystem.applyText(currentWord.toString())
             }
             "shift" -> {
                 shiftOn = !shiftOn
@@ -309,17 +326,24 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
             "backspace" -> {
                 if (currentWord.isNotEmpty()) currentWord.deleteCharAt(currentWord.length - 1)
                 keyListener?.onBackspace()
-                if (currentWord.isEmpty()) stripField.clearText() else stripField.applyText(currentWord.toString())
+                // exploding only happens here once the text is FULLY empty —
+                // removing one character just smoothly re-forms the rest.
+                if (currentWord.isEmpty()) textSystem.clearAll() else textSystem.applyText(currentWord.toString())
             }
             "space" -> {
+                // space no longer explodes anything — it just extends the
+                // sentence so you can keep writing a full sentence, even a
+                // long paragraph, without it resetting every word.
                 keyListener?.onSpace()
-                currentWord.clear()
-                stripField.clearText()
+                currentWord.append(" ")
+                textSystem.applyText(currentWord.toString())
             }
             "enter" -> {
+                // "send": the whole sentence explodes away, text goes out
+                // to the app normally, particles return to their natural flow.
                 keyListener?.onEnter()
                 currentWord.clear()
-                stripField.clearText()
+                textSystem.clearAll()
             }
             "lang_toggle" -> switchPage(if (lastLetterPage == Page.AR) Page.EN else Page.AR)
             "toggle_num" -> switchPage(if (currentPage == Page.NUM) lastLetterPage else Page.NUM)
@@ -339,6 +363,8 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         stripField.draw(canvas, sharedHue)
         bgField.update(t)
         bgField.draw(canvas, sharedHue)
+        textSystem.update()
+        textSystem.draw(canvas, sharedHue)
 
         canvas.drawRect(0f, stripHeightPx - 2f, width.toFloat(), stripHeightPx, dividerPaint)
 
