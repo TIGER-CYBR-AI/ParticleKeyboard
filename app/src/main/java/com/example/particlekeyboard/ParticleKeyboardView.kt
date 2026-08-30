@@ -22,6 +22,7 @@ interface KeyListener {
 }
 
 private data class KeyDef(val label: String, val action: String)
+private data class RenderKey(val rect: RectF, val def: KeyDef, val glassShader: Shader)
 
 private enum class Page { AR, EN, NUM, SYMBOLS, EMOJI }
 
@@ -38,7 +39,11 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
 
     private val currentWord = StringBuilder()
 
-    private val stripHeightDp = 56f
+    // the text-preview strip is now big enough that the word forming out of
+    // particles is actually READABLE, not just a blob of dots — with flowing
+    // particles visible above AND below the word, same idea as the original
+    // browser demo, just at a real, legible size.
+    private val stripHeightDp = 150f
     private var stripHeightPx = 0f
 
     private var currentPage = Page.AR
@@ -54,40 +59,36 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     private val touchSlopPx = 14f
 
     // ---------- Character sets ----------
-    // Arabic — full 28-letter alphabet plus hamza forms (ئ ء ؤ ى), taa
-    // marbuta (ة) and the lam-alif ligature (لا). Checked against the
-    // standard alphabet to make sure nothing (like د / ذ) is missing.
+    // Arabic — full 28-letter alphabet + hamza forms + backspace at the end
+    // of the last row, in its standard keyboard position.
     private val arRows: List<List<KeyDef>> = listOf(
         listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج").map { KeyDef(it, "char") },
         listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "ذ").map { KeyDef(it, "char") },
-        listOf("ئ", "ء", "ؤ", "ر", "د", "لا", "ى", "ة", "و", "ز", "ظ").map { KeyDef(it, "char") }
+        listOf("ئ", "ء", "ؤ", "ر", "د", "لا", "ى", "ة", "و", "ز", "ظ").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
     )
-    // English — full 26-letter alphabet + shift for caps + apostrophe
-    // (the rest of English punctuation lives on the dedicated Symbols page).
     private val enRows: List<List<KeyDef>> = listOf(
         listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p").map { KeyDef(it, "char") },
         listOf("a", "s", "d", "f", "g", "h", "j", "k", "l").map { KeyDef(it, "char") },
-        listOf(KeyDef("⇧", "shift")) + listOf("z", "x", "c", "v", "b", "n", "m", "'").map { KeyDef(it, "char") }
+        listOf(KeyDef("⇧", "shift")) + listOf("z", "x", "c", "v", "b", "n", "m", "'").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
     )
-    // Numbers — digits plus the symbols people actually pair with numbers
-    // (math operators, currency, basic punctuation for phone/date/time entry).
     private val numRows: List<List<KeyDef>> = listOf(
         listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0").map { KeyDef(it, "char") },
         listOf("+", "-", "×", "÷", "=", "%", "°", "#", "@", "&").map { KeyDef(it, "char") },
-        listOf("(", ")", ".", ",", ":", ";", "$", "€", "£", "¥").map { KeyDef(it, "char") }
+        listOf("(", ")", ".", ",", ":", ";", "$", "€", "£", "¥").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
     )
-    // Symbols — its own dedicated page: quotes, brackets, and the
-    // punctuation/operator characters programmers and everyday users need
-    // that don't fit on the numbers page.
-    private val symbolRows: List<List<KeyDef>> = listOf(
+    // Arabic-specific symbols page: diacritics (tashkeel) + Arabic
+    // punctuation — reached automatically when coming from the Arabic page.
+    private val arSymbolRows: List<List<KeyDef>> = listOf(
+        listOf("َ", "ً", "ُ", "ٌ", "ِ", "ٍ", "ّ", "ْ", "ـ").map { KeyDef(it, "char") },
+        listOf("،", "؛", "؟", "«", "»", "٪", "(", ")", "-").map { KeyDef(it, "char") },
+        listOf("\"", "“", "”", "…", "–", "@", "#", "/").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
+    )
+    // English-specific symbols page: general programming/punctuation set.
+    private val enSymbolRows: List<List<KeyDef>> = listOf(
         listOf("!", "@", "#", "$", "%", "^", "&", "*", "(", ")").map { KeyDef(it, "char") },
         listOf("-", "_", "=", "+", "[", "]", "{", "}", "\\", "|").map { KeyDef(it, "char") },
-        listOf(";", ":", "'", "\"", ",", ".", "?", "/", "~", "`").map { KeyDef(it, "char") }
+        listOf(";", ":", "'", "\"", ",", ".", "?", "/", "~", "`").map { KeyDef(it, "char") } + KeyDef("⌫", "backspace")
     )
-    // Emoji — a broad practical set across categories (faces, gestures,
-    // hearts, nature/objects). Scroll up/down inside the emoji area to see
-    // the rest — it doesn't all fit on one screen, exactly like a real
-    // emoji picker.
     private val emojiRows: List<List<KeyDef>> = listOf(
         listOf("😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇").map { KeyDef(it, "char") },
         listOf("🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚").map { KeyDef(it, "char") },
@@ -107,17 +108,14 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         Page.AR -> arRows
         Page.EN -> enRows
         Page.NUM -> numRows
-        Page.SYMBOLS -> symbolRows
+        Page.SYMBOLS -> if (lastLetterPage == Page.AR) arSymbolRows else enSymbolRows
         Page.EMOJI -> emojiRows
     }
 
-    // rect, definition — recomputed by layoutKeys() whenever the page or
-    // emoji scroll position changes
+    private val renderKeys = mutableListOf<RenderKey>()
+    // separate hit-test list so EMOJI scrolling can reuse simple rect logic
     private val keyRects = mutableListOf<Pair<RectF, KeyDef>>()
 
-    // fixed, realistic key height — keys never stretch to fill the whole
-    // remaining screen, and the char area is always exactly 3 rows tall
-    // for every page, so the keyboard's total height never jumps around.
     private val keyHeightDp = 46f
     private var keyHeightPx = 0f
     private val keyGapDp = 5f
@@ -129,17 +127,15 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     private val keyTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 34f
+        textSize = 32f
     }
     private val smallKeyTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 22f
+        textSize = 20f
     }
     private val dividerPaint = Paint().apply { color = Color.argb(50, 255, 255, 255) }
 
-    // "frosted glass" look: soft glow behind the key + translucent
-    // glass fill with a top-to-bottom sheen + a bright thin border.
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glassFillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glassStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -149,9 +145,6 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
     private val activeKeyFillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        // A real keyboard must NOT take the whole screen — only enough
-        // height for the strip + its key rows, so the app's own screen
-        // (the text field you're typing into) stays visible above it.
         val density = resources.displayMetrics.density
         val desiredHeightPx = ((stripHeightDp + visibleCharRows * keyHeightDp + bottomBarHeightDp) * density).toInt()
         val width = MeasureSpec.getSize(widthMeasureSpec)
@@ -171,8 +164,8 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         lastBgBounds = bgBounds
 
         if (!initialized) {
-            stripField = ParticleField(stripBounds, particleCount = 260, textPoolSize = 160, hasGap = true)
-            bgField = ParticleField(bgBounds, particleCount = 240, textPoolSize = 0, hasGap = false)
+            stripField = ParticleField(stripBounds, particleCount = 220, textPoolSize = 260, hasGap = true)
+            bgField = ParticleField(bgBounds, particleCount = 150, textPoolSize = 0, hasGap = false)
             initialized = true
         } else {
             stripField.setBounds(stripBounds)
@@ -183,12 +176,22 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
 
     private fun layoutKeys(area: RectF) {
         keyRects.clear()
+        renderKeys.clear()
         val keyboardHeight = visibleCharRows * keyHeightPx + bottomBarHeightPx
-        // anchor the keyboard to the BOTTOM of the available area, like a
-        // real keyboard — everything above it stays open particle background
         val keyboardTop = area.bottom - keyboardHeight
         charAreaRect = RectF(area.left, keyboardTop, area.right, keyboardTop + visibleCharRows * keyHeightPx)
         var y = keyboardTop
+
+        fun addKey(rect: RectF, def: KeyDef) {
+            keyRects.add(rect to def)
+            val shader = LinearGradient(
+                rect.left, rect.top, rect.left, rect.bottom,
+                Color.argb(55, 255, 255, 255),
+                Color.argb(18, 255, 255, 255),
+                Shader.TileMode.CLAMP
+            )
+            renderKeys.add(RenderKey(rect, def, shader))
+        }
 
         if (currentPage == Page.EMOJI) {
             maxEmojiScroll = max(0f, emojiRows.size * keyHeightPx - charAreaRect.height())
@@ -200,7 +203,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
                 val keyWidth = area.width() / row.size
                 var x = area.left
                 for (def in row) {
-                    keyRects.add(RectF(x + keyGapPx, rowY + keyGapPx, x + keyWidth - keyGapPx, rowY + keyHeightPx - keyGapPx) to def)
+                    addKey(RectF(x + keyGapPx, rowY + keyGapPx, x + keyWidth - keyGapPx, rowY + keyHeightPx - keyGapPx), def)
                     x += keyWidth
                 }
             }
@@ -210,15 +213,19 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
                 val keyWidth = area.width() / row.size
                 var x = area.left
                 for (def in row) {
-                    keyRects.add(RectF(x + keyGapPx, y + keyGapPx, x + keyWidth - keyGapPx, y + keyHeightPx - keyGapPx) to def)
+                    addKey(RectF(x + keyGapPx, y + keyGapPx, x + keyWidth - keyGapPx, y + keyHeightPx - keyGapPx), def)
                     x += keyWidth
                 }
                 y += keyHeightPx
             }
         }
 
-        // bottom control row: [globe][123/ABC][#+=/ABC][emoji/ABC][backspace][space][enter]
+        // bottom control row. Backspace lives at the end of the last letter
+        // row for every page EXCEPT emoji (which scrolls, so it keeps its
+        // own dedicated backspace here instead).
         y = keyboardTop + visibleCharRows * keyHeightPx
+        val isEmoji = currentPage == Page.EMOJI
+        val smallCount = if (isEmoji) 5 else 4
         val small = area.width() * 0.105f
         var x = area.left
         val numLabel = if (currentPage == Page.NUM) "ABC" else "123"
@@ -226,7 +233,7 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         val emojiLabel = if (currentPage == Page.EMOJI) "ABC" else "🙂"
 
         fun addSmall(label: String, action: String) {
-            keyRects.add(RectF(x + keyGapPx, y + keyGapPx, x + small - keyGapPx, y + bottomBarHeightPx - keyGapPx) to KeyDef(label, action))
+            addKey(RectF(x + keyGapPx, y + keyGapPx, x + small - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef(label, action))
             x += small
         }
 
@@ -234,15 +241,15 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         addSmall(numLabel, "toggle_num")
         addSmall(symLabel, "toggle_symbols")
         addSmall(emojiLabel, "toggle_emoji")
-        addSmall("⌫", "backspace")
+        if (isEmoji) addSmall("⌫", "backspace")
 
-        val remaining = area.width() - small * 5
+        val remaining = area.width() - small * smallCount
         val enterWidth = remaining * 0.32f
         val spaceWidth = remaining - enterWidth
 
-        keyRects.add(RectF(x + keyGapPx, y + keyGapPx, x + spaceWidth - keyGapPx, y + bottomBarHeightPx - keyGapPx) to KeyDef("مسافة", "space"))
+        addKey(RectF(x + keyGapPx, y + keyGapPx, x + spaceWidth - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef("مسافة", "space"))
         x += spaceWidth
-        keyRects.add(RectF(x + keyGapPx, y + keyGapPx, area.right - keyGapPx, y + bottomBarHeightPx - keyGapPx) to KeyDef("⏎", "enter"))
+        addKey(RectF(x + keyGapPx, y + keyGapPx, area.right - keyGapPx, y + bottomBarHeightPx - keyGapPx), KeyDef("⏎", "enter"))
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -310,33 +317,20 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
                 stripField.clearText()
             }
             "enter" -> {
-                // "send": particles explode away from the word, the text
-                // exits normally into the host app, and particles return to
-                // their natural up/down flow.
                 keyListener?.onEnter()
                 currentWord.clear()
                 stripField.clearText()
             }
-            "lang_toggle" -> {
-                switchPage(if (lastLetterPage == Page.AR) Page.EN else Page.AR)
-            }
-            "toggle_num" -> {
-                switchPage(if (currentPage == Page.NUM) lastLetterPage else Page.NUM)
-            }
-            "toggle_symbols" -> {
-                switchPage(if (currentPage == Page.SYMBOLS) lastLetterPage else Page.SYMBOLS)
-            }
-            "toggle_emoji" -> {
-                switchPage(if (currentPage == Page.EMOJI) lastLetterPage else Page.EMOJI)
-            }
+            "lang_toggle" -> switchPage(if (lastLetterPage == Page.AR) Page.EN else Page.AR)
+            "toggle_num" -> switchPage(if (currentPage == Page.NUM) lastLetterPage else Page.NUM)
+            "toggle_symbols" -> switchPage(if (currentPage == Page.SYMBOLS) lastLetterPage else Page.SYMBOLS)
+            "toggle_emoji" -> switchPage(if (currentPage == Page.EMOJI) lastLetterPage else Page.EMOJI)
         }
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         val t = (System.nanoTime() - startTime) / 1_000_000_000f
-        // ONE shared color for the entire keyboard (strip + background +
-        // keys together), oscillating smoothly — never a per-particle rainbow.
         val sharedHue = 260f + sin(t * 0.15f) * 70f
 
         canvas.drawColor(Color.rgb(4, 4, 6))
@@ -356,18 +350,18 @@ class ParticleKeyboardView(context: Context, attrs: AttributeSet? = null) : View
         canvas.save()
         canvas.clipRect(charAreaRect.left, charAreaRect.top, charAreaRect.right, charAreaRect.bottom + bottomBarHeightPx)
 
-        for ((rect, def) in keyRects) {
+        for (rk in renderKeys) {
+            val rect = rk.rect
+            val def = rk.def
             canvas.drawRoundRect(
                 RectF(rect.left - 3f, rect.top - 3f, rect.right + 3f, rect.bottom + 3f),
                 16f, 16f, glowPaint
             )
 
-            glassFillPaint.shader = LinearGradient(
-                rect.left, rect.top, rect.left, rect.bottom,
-                Color.argb(55, 255, 255, 255),
-                Color.argb(18, 255, 255, 255),
-                Shader.TileMode.CLAMP
-            )
+            // shader was precomputed once in layoutKeys() — NOT reallocated
+            // every frame. This was the main cause of the lag/double-tap
+            // issue: creating ~30 new gradient objects 60 times per second.
+            glassFillPaint.shader = rk.glassShader
             canvas.drawRoundRect(rect, 14f, 14f, glassFillPaint)
 
             if (def.action == "shift" && shiftOn) {
