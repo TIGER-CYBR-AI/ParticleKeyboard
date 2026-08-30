@@ -5,6 +5,11 @@ import android.view.View
 
 class ParticleImeService : InputMethodService() {
 
+    // Make sure the keyboard never expands to fullscreen mode on any device
+    // (some phones do this automatically in landscape) — we want the app's
+    // own screen to always stay visible above the keyboard.
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onCreateInputView(): View {
         val view = ParticleKeyboardView(this)
         view.keyListener = object : KeyListener {
